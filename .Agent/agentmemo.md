@@ -53,8 +53,8 @@ Ahmed is a hands-on product engineer who thinks in sprints and iterates fast. He
 ## Implicit Requirements I Noticed
 - Ahmed never explicitly said "the note overlay looks bad" but asked for a redesign after seeing the first version. Keep an eye on new UI components — they likely need a visual pass before they're truly done.
 - He mentioned "erase" and "highlight" alongside pen snapping before I listed them — he thinks about tool parity. When adding a feature to one tool, check if it applies to the others.
-- He asked about the `.toon` format — he's curious about agent tooling and LLM-specific formats. He may want to explore proper TOON format for requirements/constraints files in a future session.
+- He asked about the `.toon` format — he's curious about agent tooling and LLM-specific formats. He may want to explore proper YAML format for requirements/constraints files in a future session.
 
 ## Open Questions for Next Agent
 - Ahmed mentioned "we can even make our own file handling library or method only if necessary" for future file types. Clarify with him whether he wants a unified file handler abstraction (a `ViewFactory` pattern) before Sprint 6 begins.
-- The `.toon` files currently use a TOML-like custom format, not the real TOON spec. Consider asking Ahmed if he wants to adopt proper TOON format for machine-readable files in a future session.
+- The `.toon` files currently use a TOML-like custom format, not the real TOON spec. Consider asking Ahmed if he wants to adopt proper YAML format for machine-readable files in a future session.
