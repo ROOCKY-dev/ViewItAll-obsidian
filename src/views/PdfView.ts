@@ -85,6 +85,10 @@ export class PdfView extends FileView {
 	private opacityLabelEl: HTMLElement | null = null;
 	private opacitySliderEl: HTMLInputElement | null = null;
 
+	// Snapping
+	private snapDirection: 'horizontal' | 'vertical' | 'slope' = 'horizontal';
+	private snapDirBtnEl: HTMLButtonElement | null = null;
+
 	// Text search
 	private wrapperEl: HTMLElement | null = null;
 	private bodyEl: HTMLElement | null = null;          // flex-row container: toc + scroll
@@ -117,12 +121,21 @@ export class PdfView extends FileView {
 				else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); this.openSearchBar(); }
 				return;
 			}
+			// Shift = snap active indicator
+			if (e.key === 'Shift') {
+				const drawingTool = this.currentTool === 'pen' || this.currentTool === 'highlighter' || this.currentTool === 'eraser';
+				if (drawingTool) this.snapDirBtnEl?.classList.add('via-btn-snap-active');
+				return;
+			}
 			// Tool shortcuts — guard: don't fire when an input/textarea is focused
 			const target = e.target as HTMLElement;
 			if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
 			const toolMap: Record<string, AnnotTool> = { v: 'none', p: 'pen', h: 'highlighter', e: 'eraser', n: 'note' };
 			const tool = toolMap[e.key.toLowerCase()];
 			if (tool !== undefined) { e.preventDefault(); this.setTool(tool); }
+		});
+		this.registerDomEvent(this.containerEl as HTMLElement, 'keyup', (e: KeyboardEvent) => {
+			if (e.key === 'Shift') this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
 		});
 	}
 
@@ -152,10 +165,9 @@ export class PdfView extends FileView {
 		this.tocSidebarEl = null;
 		this.tocVisible = false;
 		this.bodyEl = null;
+		this.snapDirBtnEl = null;
 		this.contentEl.empty();
 	}
-
-	// Render ----------------------------------------------------------------
 
 	private async renderPdf(file: TFile): Promise<void> {
 		this._renderGen++;
@@ -411,6 +423,18 @@ export class PdfView extends FileView {
 		this.widthSectionEl.style.display = showColors ? 'flex' : 'none';
 		this.widthSepEl.style.display     = showColors ? '' : 'none';
 		if (showColors) this.syncWidthSlider(this.currentTool as 'pen' | 'highlighter');
+
+		// Snap direction button — always visible, Shift to activate
+		this.snapDirBtnEl = bar.createEl('button', { cls: 'via-btn via-pdf-snap-btn' }) as HTMLButtonElement;
+		this.updateSnapDirBtn();
+		this.snapDirBtnEl.addEventListener('click', () => {
+			const dirs: Array<'horizontal' | 'vertical' | 'slope'> = ['horizontal', 'vertical', 'slope'];
+			const idx = dirs.indexOf(this.snapDirection);
+			this.snapDirection = dirs[(idx + 1) % dirs.length]!;
+			this.updateSnapDirBtn();
+		});
+
+		bar.createEl('div', { cls: 'via-toolbar-sep' });
 
 		const zoomOut = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '\u2212' });
 		zoomOut.title = 'Zoom out (Ctrl+\u2212)';
@@ -670,6 +694,40 @@ export class PdfView extends FileView {
 		this.plugin.saveSettings();
 	}
 
+	// Snap -------------------------------------------------------------------
+
+	private updateSnapDirBtn(): void {
+		if (!this.snapDirBtnEl) return;
+		const labels = { horizontal: '⟷ H', vertical: '↕ V', slope: '↗ 45°' };
+		this.snapDirBtnEl.textContent = labels[this.snapDirection];
+		this.snapDirBtnEl.title = `Snap: ${this.snapDirection} — click to cycle (hold Shift while drawing to activate)`;
+	}
+
+	/** Constrain `raw` to the current snap direction from `origin`. */
+	private snapPoint(
+		origin: { x: number; y: number },
+		raw: { x: number; y: number }
+	): { x: number; y: number } {
+		const dx = raw.x - origin.x;
+		const dy = raw.y - origin.y;
+		switch (this.snapDirection) {
+			case 'horizontal':
+				return { x: raw.x, y: origin.y };
+			case 'vertical':
+				return { x: origin.x, y: raw.y };
+			case 'slope': {
+				// Snap to nearest 45° increment (8 directions)
+				const angle = Math.atan2(dy, dx);
+				const snapped = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+				const dist = Math.sqrt(dx * dx + dy * dy);
+				return {
+					x: origin.x + dist * Math.cos(snapped),
+					y: origin.y + dist * Math.sin(snapped),
+				};
+			}
+		}
+	}
+
 	// Page jump --------------------------------------------------------------
 
 	private openPageJumpInput(): void {
@@ -749,13 +807,28 @@ export class PdfView extends FileView {
 
 		annotCanvas.addEventListener('pointermove', e => {
 			if (!this.isDrawing || !this.currentPath) return;
-			this.currentPath.points.push(getPos(e));
+			const raw = getPos(e);
+			if (e.shiftKey && this.currentPath.points.length >= 1) {
+				const origin = this.currentPath.points[0]!;
+				const snapped = this.snapPoint(origin, raw);
+				// Replace last point to keep a clean constrained stroke
+				if (this.currentPath.points.length > 1) {
+					this.currentPath.points[this.currentPath.points.length - 1] = snapped;
+				} else {
+					this.currentPath.points.push(snapped);
+				}
+				this.snapDirBtnEl?.classList.add('via-btn-snap-active');
+			} else {
+				this.currentPath.points.push(raw);
+				if (!e.shiftKey) this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
+			}
 			this.redrawAnnotations(ctx, this.currentPath);
 		});
 
 		const finishDraw = () => {
 			if (!this.isDrawing || !this.currentPath) return;
 			this.isDrawing = false;
+			this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
 			let pa = getPageAnnotations(this.annotData, pageNum);
 			pa = { ...pa, paths: [...pa.paths, this.currentPath!] };
 			this.annotData = setPageAnnotations(this.annotData, pa);

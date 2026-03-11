@@ -350,6 +350,20 @@
 .via-btn-export { background: var(--interactive-accent); color: var(--text-on-accent); border-color: transparent; }
 .via-btn-export:hover { filter: brightness(1.1); }
 
+/* Snap direction button */
+.via-pdf-snap-btn {
+	min-width: 54px;
+	font-size: var(--font-ui-small);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Glows orange when Shift is held and snapping is live */
+.via-btn-snap-active {
+	background: var(--color-orange, #e8590c) !important;
+	color: #fff !important;
+	border-color: transparent !important;
+}
+
 /* ── Color picker swatches ──────────────────────────────────────────────── */
 .via-pdf-color-section {
 	display: flex;
