@@ -47,10 +47,10 @@
 
 | ID | Feature | Notes |
 |----|---------|-------|
-| `pdf-toc` | **PDF: TOC / outline sidebar** | pdfjs getOutline(); collapsible panel; click to scroll |
-| `pdf-export` | **PDF: Export with embedded annotations** | pdf-lib vector draw; export as .annotated.pdf |
-| `pdf-snap` | **PDF: Shape snap** | Near-rect/circle/line detection; snap grid overlay (§3.6 constraints) |
-| `pdf-text-note` | **PDF: Text note anchored to page** | Click-to-place text box; normalised coords |
+| `pdf-toc` | **PDF: TOC / outline sidebar** | ✅ pdfjs getOutline(); collapsible panel; click to scroll |
+| `pdf-export` | **PDF: Export with embedded annotations** | ✅ pdf-lib vector draw; export as .annotated.pdf |
+| `pdf-snap` | **PDF: Shape snap** | Deferred to post-release (complex/subjective) |
+| `pdf-text-note` | **PDF: Text note anchored to page** | ✅ Click-to-place; draggable; normalised coords; N key |
 
 ---
 

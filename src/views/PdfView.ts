@@ -1,8 +1,9 @@
 import { FileView, TFile, WorkspaceLeaf, Notice } from 'obsidian';
 import * as pdfjsLib from 'pdfjs-dist';
-import type { TextItem as PdfTextItem } from 'pdfjs-dist/types/src/display/api';
+import type { TextItem as PdfTextItem, RefProxy as PdfRefProxy } from 'pdfjs-dist/types/src/display/api';
+import { PDFDocument, rgb, LineCapStyle } from 'pdf-lib';
 import { VIEW_TYPE_PDF } from '../types';
-import type { PageAnnotations, AnnotationPath, AnnotationFile } from '../types';
+import type { PageAnnotations, AnnotationPath, AnnotationFile, TextNote } from '../types';
 import {
 	loadAnnotations,
 	saveAnnotations,
@@ -22,7 +23,7 @@ function getPdfWorkerUrl(): string {
 	return _workerBlobUrl;
 }
 
-type AnnotTool = 'none' | 'pen' | 'highlighter' | 'eraser';
+type AnnotTool = 'none' | 'pen' | 'highlighter' | 'eraser' | 'note';
 type PageRenderState = 'placeholder' | 'rendering' | 'rendered';
 
 interface PageCtx {
@@ -86,12 +87,18 @@ export class PdfView extends FileView {
 
 	// Text search
 	private wrapperEl: HTMLElement | null = null;
+	private bodyEl: HTMLElement | null = null;          // flex-row container: toc + scroll
+	private tocSidebarEl: HTMLElement | null = null;
+	private tocVisible = false;
 	private searchBarEl: HTMLElement | null = null;
 	private searchInputEl: HTMLInputElement | null = null;
 	private searchMatchCountEl: HTMLElement | null = null;
 	private searchMatches: SearchMatch[] = [];
 	private searchCurrentIdx = -1;
 	private _textCache = new Map<number, PdfTextItem[]>();
+
+	// Text notes overlay elements (keyed by note id)
+	private noteEls = new Map<string, HTMLElement>();
 
 	constructor(leaf: WorkspaceLeaf, plugin: ViewItAllPlugin) {
 		super(leaf);
@@ -113,7 +120,7 @@ export class PdfView extends FileView {
 			// Tool shortcuts — guard: don't fire when an input/textarea is focused
 			const target = e.target as HTMLElement;
 			if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
-			const toolMap: Record<string, AnnotTool> = { v: 'none', p: 'pen', h: 'highlighter', e: 'eraser' };
+			const toolMap: Record<string, AnnotTool> = { v: 'none', p: 'pen', h: 'highlighter', e: 'eraser', n: 'note' };
 			const tool = toolMap[e.key.toLowerCase()];
 			if (tool !== undefined) { e.preventDefault(); this.setTool(tool); }
 		});
@@ -141,6 +148,10 @@ export class PdfView extends FileView {
 		this._textCache.clear();
 		this.searchMatches = [];
 		this.searchCurrentIdx = -1;
+		this.noteEls.clear();
+		this.tocSidebarEl = null;
+		this.tocVisible = false;
+		this.bodyEl = null;
 		this.contentEl.empty();
 	}
 
@@ -153,6 +164,9 @@ export class PdfView extends FileView {
 		this._textCache.clear();
 		this.searchMatches = [];
 		this.searchCurrentIdx = -1;
+		this.noteEls.clear();
+		this.tocSidebarEl = null;
+		this.tocVisible = false;
 		this.renderObserver?.disconnect(); this.renderObserver = null;
 		this.pageObserver?.disconnect(); this.pageObserver = null;
 
@@ -164,7 +178,11 @@ export class PdfView extends FileView {
 		const toolbar = this.buildToolbar();
 		wrapper.appendChild(toolbar);
 
-		const scrollArea = wrapper.createEl('div', { cls: 'via-pdf-scroll' });
+		// Body area: flex-row holds optional TOC sidebar + scroll area
+		const bodyEl = wrapper.createEl('div', { cls: 'via-pdf-body' });
+		this.bodyEl = bodyEl;
+
+		const scrollArea = bodyEl.createEl('div', { cls: 'via-pdf-scroll' });
 		this.scrollAreaEl = scrollArea;
 		scrollArea.addEventListener('wheel', (e: WheelEvent) => this.handleWheelZoom(e), { passive: false });
 
@@ -207,6 +225,14 @@ export class PdfView extends FileView {
 		if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = `1 / ${numPages}`;
 		this.attachRenderObserver();
 		this.attachPageObserver();
+
+		// Render existing text notes
+		for (const note of (this.annotData.notes ?? [])) {
+			this.renderNoteEl(note);
+		}
+
+		// Load TOC in background (non-blocking)
+		this.loadToc().catch(console.error);
 	}
 
 	// Lazy rendering ---------------------------------------------------------
@@ -289,11 +315,19 @@ export class PdfView extends FileView {
 		const bar = document.createElement('div');
 		bar.className = 'via-pdf-toolbar';
 
+		// TOC toggle
+		const tocBtn = bar.createEl('button', { cls: 'via-btn', text: '📑 TOC' });
+		tocBtn.title = 'Toggle table of contents';
+		tocBtn.addEventListener('click', () => this.toggleToc());
+
+		bar.createEl('div', { cls: 'via-toolbar-sep' });
+
 		const tools: { id: AnnotTool; label: string; key: string }[] = [
-			{ id: 'none', label: '\ud83d\udc41 View', key: 'V' },
-			{ id: 'pen', label: '\u270f\ufe0f Pen', key: 'P' },
-			{ id: 'highlighter', label: '\ud83d\udd8a Highlight', key: 'H' },
-			{ id: 'eraser', label: '\u2b1c Erase', key: 'E' },
+			{ id: 'none',        label: '👁 View',      key: 'V' },
+			{ id: 'pen',         label: '✏️ Pen',        key: 'P' },
+			{ id: 'highlighter', label: '🖊 Highlight',  key: 'H' },
+			{ id: 'eraser',      label: '⬜ Erase',      key: 'E' },
+			{ id: 'note',        label: '📝 Note',       key: 'N' },
 		];
 
 		for (const t of tools) {
@@ -401,11 +435,15 @@ export class PdfView extends FileView {
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
 
-		const clearBtn = bar.createEl('button', { cls: 'via-btn via-btn-danger', text: '\ud83d\uddd1 Clear page' });
+		const clearBtn = bar.createEl('button', { cls: 'via-btn via-btn-danger', text: '🗑 Clear page' });
 		clearBtn.addEventListener('click', () => this.clearCurrentPageAnnotations());
 
-		const saveBtn = bar.createEl('button', { cls: 'via-btn via-btn-save', text: '\ud83d\udcbe Save annotations' });
+		const saveBtn = bar.createEl('button', { cls: 'via-btn via-btn-save', text: '💾 Save annotations' });
 		saveBtn.addEventListener('click', () => this.persistAnnotations());
+
+		const exportBtn = bar.createEl('button', { cls: 'via-btn via-btn-export', text: '📤 Export PDF' });
+		exportBtn.title = 'Export PDF with annotations embedded';
+		exportBtn.addEventListener('click', () => this.exportAnnotatedPdf());
 
 		return bar;
 	}
@@ -533,9 +571,11 @@ export class PdfView extends FileView {
 	private updateCanvasInteraction(): void {
 		for (const ctx of this.pages) {
 			if (!ctx.annotCanvas) continue;
-			const drawing = this.currentTool !== 'none';
+			const drawing = this.currentTool !== 'none' && this.currentTool !== 'note';
 			ctx.annotCanvas.style.pointerEvents = drawing ? 'auto' : 'none';
 			ctx.annotCanvas.style.cursor = drawing ? 'crosshair' : 'default';
+			// Note tool uses the page container itself (below canvas layer)
+			ctx.container.style.cursor = this.currentTool === 'note' ? 'text' : '';
 		}
 	}
 
@@ -725,6 +765,17 @@ export class PdfView extends FileView {
 
 		annotCanvas.addEventListener('pointerup', finishDraw);
 		annotCanvas.addEventListener('pointercancel', finishDraw);
+
+		// Note tool: click on page container (not canvas) to place a note
+		ctx.container.addEventListener('click', (e: MouseEvent) => {
+			if (this.currentTool !== 'note') return;
+			// Ignore clicks on existing note overlays
+			if ((e.target as HTMLElement).closest('.via-pdf-note')) return;
+			const rect = ctx.container.getBoundingClientRect();
+			const x = (e.clientX - rect.left) / rect.width;
+			const y = (e.clientY - rect.top) / rect.height;
+			this.createNote(pageNum, x, y);
+		});
 	}
 
 	// Annotations ------------------------------------------------------------
@@ -840,9 +891,9 @@ export class PdfView extends FileView {
 			debounce = setTimeout(() => this.performSearch(this.searchInputEl!.value), 300);
 		});
 
-		// Insert search bar: after toolbar (first child), before scroll area
-		const scrollArea = this.scrollAreaEl;
-		if (scrollArea) this.wrapperEl.insertBefore(bar, scrollArea);
+		// Insert search bar: after toolbar (first child of wrapper), before body area
+		const bodyEl = this.bodyEl;
+		if (bodyEl) this.wrapperEl!.insertBefore(bar, bodyEl);
 
 		this.searchInputEl.focus();
 	}
@@ -972,5 +1023,233 @@ export class PdfView extends FileView {
 		const items = tc.items.filter((it): it is PdfTextItem => 'str' in it);
 		this._textCache.set(pageNum, items);
 		return items;
+	}
+
+	// TOC / Outline ----------------------------------------------------------
+
+	private async loadToc(): Promise<void> {
+		if (!this.pdfDoc) return;
+		try {
+			const outline = await this.pdfDoc.getOutline();
+			if (!outline || outline.length === 0) return; // no bookmarks — keep TOC button visible but sidebar empty is handled
+			// Store outline so toggleToc can build the panel
+			(this as any)._outline = outline;
+		} catch {
+			// Some PDFs throw on getOutline — ignore
+		}
+	}
+
+	private toggleToc(): void {
+		if (!this.bodyEl) return;
+		this.tocVisible = !this.tocVisible;
+
+		if (!this.tocVisible) {
+			this.tocSidebarEl?.remove();
+			this.tocSidebarEl = null;
+			return;
+		}
+
+		const sidebar = this.bodyEl.createEl('div', { cls: 'via-pdf-toc' });
+		this.tocSidebarEl = sidebar;
+		// Insert before the scroll area
+		this.bodyEl.insertBefore(sidebar, this.scrollAreaEl);
+
+		const header = sidebar.createEl('div', { cls: 'via-pdf-toc-header' });
+		header.createEl('span', { text: 'Contents' });
+		const closeBtn = header.createEl('button', { cls: 'via-btn', text: '✕' });
+		closeBtn.addEventListener('click', () => { this.tocVisible = false; sidebar.remove(); this.tocSidebarEl = null; });
+
+		const list = sidebar.createEl('div', { cls: 'via-pdf-toc-list' });
+		const outline = (this as any)._outline as any[];
+
+		if (!outline || outline.length === 0) {
+			list.createEl('p', { cls: 'via-pdf-toc-empty', text: 'No outline available for this PDF.' });
+			return;
+		}
+
+		const renderItems = (items: typeof outline, parentEl: HTMLElement, depth = 0) => {
+			for (const item of items) {
+				const row = parentEl.createEl('div', { cls: 'via-pdf-toc-item' });
+				row.style.paddingLeft = `${8 + depth * 14}px`;
+
+				if (item.items && item.items.length > 0) {
+					const toggle = row.createEl('span', { cls: 'via-pdf-toc-toggle', text: '▾' });
+					let collapsed = false;
+					const childList = parentEl.createEl('div');
+					renderItems(item.items, childList, depth + 1);
+
+					toggle.addEventListener('click', (e) => {
+						e.stopPropagation();
+						collapsed = !collapsed;
+						childList.style.display = collapsed ? 'none' : '';
+						toggle.textContent = collapsed ? '▸' : '▾';
+					});
+				}
+
+				const label = row.createEl('span', { cls: 'via-pdf-toc-label', text: item.title ?? '(untitled)' });
+				label.addEventListener('click', async () => {
+					if (!this.pdfDoc) return;
+					try {
+						let dest = item.dest;
+						if (typeof dest === 'string') dest = await this.pdfDoc.getDestination(dest);
+						if (!Array.isArray(dest) || dest.length === 0) return;
+						const pageRef = dest[0];
+						const pageIdx = await this.pdfDoc.getPageIndex(pageRef as PdfRefProxy);
+						this.scrollToPage(pageIdx + 1);
+					} catch {
+						// Destination lookup failed — silently ignore
+					}
+				});
+			}
+		};
+
+		renderItems(outline, list);
+	}
+
+	// Text notes -------------------------------------------------------------
+
+	private createNote(pageNum: number, x: number, y: number): void {
+		const note: TextNote = {
+			id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+			page: pageNum,
+			x, y,
+			text: '',
+			color: '#ffd43b',
+		};
+		this.annotData = {
+			...this.annotData,
+			notes: [...(this.annotData.notes ?? []), note],
+		};
+		this.renderNoteEl(note, true);
+	}
+
+	private renderNoteEl(note: TextNote, focusImmediately = false): void {
+		const ctx = this.pages.find(p => p.pageNum === note.page);
+		if (!ctx) return;
+
+		const el = ctx.container.createEl('div', { cls: 'via-pdf-note' });
+		el.style.cssText = `left:${note.x * 100}%;top:${note.y * 100}%;background:${note.color ?? '#ffd43b'}`;
+		el.dataset.noteId = note.id;
+
+		const header = el.createEl('div', { cls: 'via-pdf-note-header' });
+
+		// Drag handle
+		header.createEl('span', { cls: 'via-pdf-note-drag', text: '⠿' }).addEventListener('mousedown', (e) => {
+			e.preventDefault();
+			const startX = e.clientX, startY = e.clientY;
+			const origLeft = note.x, origTop = note.y;
+			const rect = ctx.container.getBoundingClientRect();
+
+			const onMove = (me: MouseEvent) => {
+				const dx = (me.clientX - startX) / rect.width;
+				const dy = (me.clientY - startY) / rect.height;
+				note.x = Math.max(0, Math.min(0.9, origLeft + dx));
+				note.y = Math.max(0, Math.min(0.95, origTop + dy));
+				el.style.left = `${note.x * 100}%`;
+				el.style.top  = `${note.y * 100}%`;
+			};
+			const onUp = () => {
+				window.removeEventListener('mousemove', onMove);
+				window.removeEventListener('mouseup', onUp);
+			};
+			window.addEventListener('mousemove', onMove);
+			window.addEventListener('mouseup', onUp);
+		});
+
+		const deleteBtn = header.createEl('button', { cls: 'via-pdf-note-delete', text: '✕' });
+		deleteBtn.addEventListener('click', () => {
+			this.annotData = {
+				...this.annotData,
+				notes: (this.annotData.notes ?? []).filter(n => n.id !== note.id),
+			};
+			el.remove();
+			this.noteEls.delete(note.id);
+		});
+
+		const textarea = el.createEl('textarea', { cls: 'via-pdf-note-text' });
+		textarea.value = note.text;
+		textarea.placeholder = 'Note…';
+		textarea.addEventListener('input', () => { note.text = textarea.value; });
+		textarea.addEventListener('keydown', e => e.stopPropagation());
+
+		this.noteEls.set(note.id, el);
+		if (focusImmediately) textarea.focus();
+	}
+
+	// Export -----------------------------------------------------------------
+
+	private async exportAnnotatedPdf(): Promise<void> {
+		if (!this.currentFile || !this.pdfDoc) return;
+		new Notice('Exporting PDF with annotations…');
+
+		try {
+			const srcBuffer = await this.app.vault.adapter.readBinary(this.currentFile.path);
+			const pdfLibDoc = await PDFDocument.load(srcBuffer);
+			const pages = pdfLibDoc.getPages();
+
+			for (const pa of this.annotData.pages) {
+				const pageIdx = pa.page - 1;
+				const libPage = pages[pageIdx];
+				if (!libPage || pa.paths.length === 0) continue;
+
+				const pjsPage = await this.pdfDoc.getPage(pa.page);
+				const vp = pjsPage.getViewport({ scale: 1.0 });
+				const pdfW = libPage.getWidth();
+				const pdfH = libPage.getHeight();
+				const scaleX = pdfW / vp.width;
+				const scaleY = pdfH / vp.height;
+
+				for (const path of pa.paths) {
+					if (path.tool === 'eraser') continue;
+					if (path.points.length < 2) continue;
+
+					const pts = path.points.map(p => ({
+						px: p.x * vp.width  * scaleX,
+						py: pdfH - p.y * vp.height * scaleY,
+					}));
+
+					const hexToRgb = (hex: string) => {
+						const n = parseInt(hex.replace('#', ''), 16);
+						return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+					};
+
+					const lineWidth = (path.width * scaleX + path.width * scaleY) / 2;
+					const opacity = path.tool === 'highlighter' ? (path.opacity ?? 0.35) : 1;
+
+					// Build SVG path string
+					let d = `M ${pts[0]!.px.toFixed(2)} ${pts[0]!.py.toFixed(2)}`;
+					for (let i = 1; i < pts.length; i++) {
+						d += ` L ${pts[i]!.px.toFixed(2)} ${pts[i]!.py.toFixed(2)}`;
+					}
+
+					libPage.drawSvgPath(d, {
+						borderColor: hexToRgb(path.color),
+						borderWidth: lineWidth,
+						borderOpacity: opacity,
+						borderLineCap: LineCapStyle.Round,
+						opacity: 0,
+					});
+				}
+			}
+
+			const exportBytes = await pdfLibDoc.save();
+			const exportBuffer = exportBytes.buffer as ArrayBuffer;
+
+			// Save as <basename>.annotated.pdf next to original
+			const dir = this.currentFile.parent?.path ?? '';
+			const base = this.currentFile.basename;
+			const exportPath = dir ? `${dir}/${base}.annotated.pdf` : `${base}.annotated.pdf`;
+
+			const existing = this.app.vault.getAbstractFileByPath(exportPath);
+			if (existing && existing instanceof TFile) {
+				await this.app.vault.modifyBinary(existing, exportBuffer);
+			} else {
+				await this.app.vault.createBinary(exportPath, exportBuffer);
+			}
+
+			new Notice(`✅ Exported to "${base}.annotated.pdf"`);
+		} catch (err) {
+			new Notice(`❌ Export failed: ${String(err)}`);
+		}
 	}
 }

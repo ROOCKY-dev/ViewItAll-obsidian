@@ -14,7 +14,18 @@ export interface PageAnnotations {
 	paths: AnnotationPath[];
 }
 
+/** A text note pinned to a normalised (0-1) position on a PDF page. */
+export interface TextNote {
+	id: string;
+	page: number;
+	x: number; // normalised 0-1
+	y: number; // normalised 0-1
+	text: string;
+	color?: string; // background swatch color, defaults to '#ffd43b'
+}
+
 export interface AnnotationFile {
 	version: 1;
 	pages: PageAnnotations[];
+	notes?: TextNote[];
 }
