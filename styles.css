@@ -695,3 +695,329 @@
     color: var(--text-faint);
     font-style: italic;
 }
+
+/* ── Spreadsheet viewer ──────────────────────────────────────────────── */
+
+.via-sheet-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+.via-sheet-wrapper--toolbar-bottom { flex-direction: column-reverse; }
+
+.via-sheet-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    padding: var(--size-4-1) var(--size-4-3);
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    flex-shrink: 0;
+    min-height: 36px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.via-sheet-toolbar::-webkit-scrollbar { display: none; }
+.via-sheet-wrapper--toolbar-bottom .via-sheet-toolbar {
+    border-bottom: none;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.via-sheet-file-label {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    flex-shrink: 0;
+}
+.via-sheet-file-name {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+}
+
+/* Sheet tabs */
+.via-sheet-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.via-sheet-tab {
+    padding: var(--size-4-1) var(--size-4-2);
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+    white-space: nowrap;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 80ms, color 80ms;
+}
+.via-sheet-tab:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+.via-sheet-tab.is-active {
+    background: var(--background-modifier-active-hover);
+    color: var(--text-normal);
+    font-weight: 600;
+}
+
+.via-sheet-info {
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.via-sheet-scroll {
+    flex: 1;
+    overflow: auto;
+    background: var(--background-primary);
+}
+
+.via-sheet-table-wrap {
+    min-width: 100%;
+}
+
+.via-sheet-empty {
+    padding: var(--size-4-6);
+    color: var(--text-faint);
+    font-size: var(--font-ui-medium);
+    text-align: center;
+}
+
+/* Table */
+.via-sheet-table {
+    border-collapse: collapse;
+    width: max-content;
+    min-width: 100%;
+    font-size: var(--font-ui-small);
+    font-family: var(--font-monospace);
+}
+
+.via-sheet-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    font-weight: 600;
+    text-align: center;
+    padding: var(--size-4-1) var(--size-4-2);
+    border: 1px solid var(--background-modifier-border);
+    white-space: nowrap;
+    min-width: 64px;
+}
+
+.via-sheet-table tbody td {
+    padding: var(--size-4-1) var(--size-4-2);
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-normal);
+    white-space: nowrap;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.via-sheet-table tbody tr:hover td {
+    background: var(--background-modifier-hover);
+}
+
+/* Row number column */
+.via-sheet-row-num {
+    color: var(--text-faint);
+    font-weight: 600;
+    text-align: center;
+    background: var(--background-secondary);
+    min-width: 40px;
+    width: 40px;
+    user-select: none;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+}
+
+thead .via-sheet-row-num {
+    z-index: 3;
+}
+
+/* ── PowerPoint viewer ───────────────────────────────────────────────── */
+
+.via-pptx-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+.via-pptx-wrapper--toolbar-bottom { flex-direction: column-reverse; }
+
+.via-pptx-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    padding: var(--size-4-1) var(--size-4-3);
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    flex-shrink: 0;
+    min-height: 36px;
+}
+.via-pptx-wrapper--toolbar-bottom .via-pptx-toolbar {
+    border-bottom: none;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.via-pptx-counter {
+    font-size: var(--font-ui-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    white-space: nowrap;
+    min-width: 52px;
+    text-align: center;
+    user-select: none;
+}
+
+.via-pptx-file-label {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    flex-shrink: 0;
+}
+.via-pptx-file-name {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+}
+
+.via-pptx-info {
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Body: strip + main */
+.via-pptx-body {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Slide strip sidebar */
+.via-pptx-strip {
+    width: 160px;
+    min-width: 120px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-1);
+    overflow-y: auto;
+    padding: var(--size-4-2);
+    border-right: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+}
+
+.via-pptx-thumb {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--size-4-1);
+    padding: var(--size-4-2);
+    border-radius: var(--radius-s);
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: background 80ms, border-color 80ms;
+}
+.via-pptx-thumb:hover {
+    background: var(--background-modifier-hover);
+}
+.via-pptx-thumb.is-active {
+    border-color: var(--interactive-accent);
+    background: var(--background-modifier-active-hover);
+}
+
+.via-pptx-thumb-num {
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+    font-weight: 600;
+    min-width: 20px;
+    flex-shrink: 0;
+}
+
+.via-pptx-thumb-preview {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+/* Main slide scroll area */
+.via-pptx-scroll {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: var(--size-4-6) var(--size-4-4);
+    background: var(--background-secondary);
+}
+
+/* Slide card */
+.via-pptx-slide {
+    background: var(--background-primary);
+    border-radius: var(--radius-m);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15), 0 1px 4px rgba(0, 0, 0, 0.08);
+    padding: var(--size-4-8);
+    width: 100%;
+    max-width: 860px;
+    min-height: 480px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-4);
+    transform-origin: top center;
+    transition: transform 0.15s ease;
+}
+
+.via-pptx-slide-img {
+    max-width: 100%;
+    border-radius: var(--radius-s);
+    display: block;
+    margin: 0 auto;
+}
+
+.via-pptx-slide-text {
+    font-size: var(--font-ui-medium);
+    font-family: var(--font-text);
+    color: var(--text-normal);
+    line-height: 1.6;
+}
+
+.via-pptx-slide-text:first-child {
+    font-size: 1.4em;
+    font-weight: 700;
+    color: var(--text-normal);
+}
+
+.via-pptx-slide-empty {
+    color: var(--text-faint);
+    font-style: italic;
+    text-align: center;
+    padding: var(--size-4-8);
+}
+
+/* Hidden slide strip */
+.via-pptx-strip.is-hidden {
+    display: none;
+}

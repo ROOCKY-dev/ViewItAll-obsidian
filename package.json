@@ -13,7 +13,9 @@
 		"release:patch": "npm version patch",
 		"release:minor": "npm version minor",
 		"release:major": "npm version major",
-		"lint": "eslint ."
+		"lint": "eslint .",
+		"lint:css": "node scripts/check-css.js",
+		"lint:all": "eslint . && node scripts/check-css.js"
 	},
 	"keywords": [],
 	"license": "0-BSD",
@@ -30,9 +32,11 @@
 	},
 	"dependencies": {
 		"html-to-docx": "^1.8.0",
+		"jszip": "^3.10.1",
 		"mammoth": "^1.11.0",
 		"obsidian": "latest",
 		"pdf-lib": "^1.17.1",
-		"pdfjs-dist": "^3.11.174"
+		"pdfjs-dist": "^3.11.174",
+		"xlsx": "^0.18.5"
 	}
 }

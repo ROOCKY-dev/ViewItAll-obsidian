@@ -7,11 +7,24 @@ export type SnapModifier    = 'Alt' | 'Shift';
 export type SnapDirection   = 'horizontal' | 'vertical' | 'slope';
 
 export interface PluginSettings {
+// ── File-type toggles ─────────────────────────────────────────────────
+enablePdf: boolean;
+enableDocx: boolean;
+enableXlsx: boolean;
+enableCsv: boolean;
+enablePptx: boolean;
+
 // ── DOCX ─────────────────────────────────────────────────────────────
 docxOpenMode: OpenMode;
 docxToolbarPosition: ToolbarPosition;
 docxDefaultEditMode: boolean;
 confirmOnSave: boolean;
+
+// ── Spreadsheet (.xlsx / .csv) ────────────────────────────────────────
+spreadsheetToolbarPosition: ToolbarPosition;
+
+// ── PowerPoint (.pptx) ────────────────────────────────────────────────
+pptxToolbarPosition: ToolbarPosition;
 
 // ── PDF — general ─────────────────────────────────────────────────────
 pdfOpenMode: OpenMode;
@@ -46,10 +59,20 @@ keySearch:        string; // default 'f'  (with Ctrl/Cmd held)
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
+enablePdf: true,
+enableDocx: true,
+enableXlsx: true,
+enableCsv: true,
+enablePptx: true,
+
 docxOpenMode: 'tab',
 docxToolbarPosition: 'top',
 docxDefaultEditMode: false,
 confirmOnSave: true,
+
+spreadsheetToolbarPosition: 'top',
+
+pptxToolbarPosition: 'top',
 
 pdfOpenMode: 'tab',
 pdfToolbarPosition: 'top',
@@ -96,10 +119,52 @@ display(): void {
 const { containerEl } = this;
 containerEl.empty();
 
-containerEl.createEl('h2', { text: 'ViewItAll Settings' });
+new Setting(containerEl).setName('ViewItAll settings').setHeading();
+
+// ── File Types ───────────────────────────────────────────────────────
+new Setting(containerEl).setName('File types').setHeading();
+containerEl.createEl('p', {
+text: 'Enable or disable support for each file type. Changes take effect after reloading Obsidian.',
+cls: 'setting-item-description',
+});
+
+new Setting(containerEl)
+.setName('PDF (.pdf)')
+.addToggle(t =>
+t.setValue(this.plugin.settings.enablePdf)
+ .onChange(async v => { this.plugin.settings.enablePdf = v; await this.plugin.saveSettings(); })
+);
+
+new Setting(containerEl)
+.setName('Word (.docx)')
+.addToggle(t =>
+t.setValue(this.plugin.settings.enableDocx)
+ .onChange(async v => { this.plugin.settings.enableDocx = v; await this.plugin.saveSettings(); })
+);
+
+new Setting(containerEl)
+.setName('Excel (.xlsx)')
+.addToggle(t =>
+t.setValue(this.plugin.settings.enableXlsx)
+ .onChange(async v => { this.plugin.settings.enableXlsx = v; await this.plugin.saveSettings(); })
+);
+
+new Setting(containerEl)
+.setName('CSV (.csv)')
+.addToggle(t =>
+t.setValue(this.plugin.settings.enableCsv)
+ .onChange(async v => { this.plugin.settings.enableCsv = v; await this.plugin.saveSettings(); })
+);
+
+new Setting(containerEl)
+.setName('PowerPoint (.pptx)')
+.addToggle(t =>
+t.setValue(this.plugin.settings.enablePptx)
+ .onChange(async v => { this.plugin.settings.enablePptx = v; await this.plugin.saveSettings(); })
+);
 
 // ── DOCX ─────────────────────────────────────────────────────────────
-containerEl.createEl('h3', { text: 'Word Documents (.docx)' });
+new Setting(containerEl).setName('Word documents (.docx)').setHeading();
 
 new Setting(containerEl)
 .setName('Open mode')
@@ -121,7 +186,7 @@ t.setValue(this.plugin.settings.docxDefaultEditMode)
 
 new Setting(containerEl)
 .setName('Toolbar position')
-.setDesc('Where to pin the DOCX toolbar.')
+.setDesc('Where to pin the toolbar.')
 .addDropdown(dd =>
 dd.addOption('top', 'Top').addOption('bottom', 'Bottom')
   .setValue(this.plugin.settings.docxToolbarPosition)
@@ -136,12 +201,36 @@ t.setValue(this.plugin.settings.confirmOnSave)
  .onChange(async v => { this.plugin.settings.confirmOnSave = v; await this.plugin.saveSettings(); })
 );
 
+// ── Spreadsheet ──────────────────────────────────────────────────
+new Setting(containerEl).setName('Spreadsheets (.xlsx / .csv)').setHeading();
+
+new Setting(containerEl)
+.setName('Toolbar position')
+.setDesc('Where to pin the spreadsheet toolbar.')
+.addDropdown(dd =>
+dd.addOption('top', 'Top').addOption('bottom', 'Bottom')
+  .setValue(this.plugin.settings.spreadsheetToolbarPosition)
+  .onChange(async v => { this.plugin.settings.spreadsheetToolbarPosition = v as ToolbarPosition; await this.plugin.saveSettings(); })
+);
+
+// ── PowerPoint ────────────────────────────────────────────────────
+new Setting(containerEl).setName('PowerPoint (.pptx)').setHeading();
+
+new Setting(containerEl)
+.setName('Toolbar position')
+.setDesc('Where to pin the slide toolbar.')
+.addDropdown(dd =>
+dd.addOption('top', 'Top').addOption('bottom', 'Bottom')
+  .setValue(this.plugin.settings.pptxToolbarPosition)
+  .onChange(async v => { this.plugin.settings.pptxToolbarPosition = v as ToolbarPosition; await this.plugin.saveSettings(); })
+);
+
 // ── PDF — General ─────────────────────────────────────────────────
-containerEl.createEl('h3', { text: 'PDF Files (.pdf) — General' });
+new Setting(containerEl).setName('PDF files — general').setHeading();
 
 new Setting(containerEl)
 .setName('Open mode')
-.setDesc('Where to open .pdf files.')
+.setDesc('Where to open PDF files.')
 .addDropdown(dd =>
 dd.addOption('tab', 'New tab')
   .addOption('sidebar-right', 'Right sidebar')
@@ -185,14 +274,14 @@ dd.addOption('none', 'None (view only)')
 
 new Setting(containerEl)
 .setName('Show table of contents on open')
-.setDesc('Automatically expand the TOC sidebar when a PDF is opened (only if the PDF has an outline).')
+.setDesc('Automatically expand the table of contents sidebar when a PDF is opened (only if the PDF has an outline).')
 .addToggle(t =>
 t.setValue(this.plugin.settings.showTocOnOpen)
  .onChange(async v => { this.plugin.settings.showTocOnOpen = v; await this.plugin.saveSettings(); })
 );
 
 // ── PDF — Annotation Tools ────────────────────────────────────────
-containerEl.createEl('h3', { text: 'PDF Files (.pdf) — Annotation Tools' });
+new Setting(containerEl).setName('PDF files — annotation tools').setHeading();
 
 new Setting(containerEl)
 .setName('Pen color')
@@ -245,7 +334,7 @@ cp.setValue(this.plugin.settings.noteDefaultColor)
 );
 
 // ── PDF — Snap ────────────────────────────────────────────────────
-containerEl.createEl('h3', { text: 'PDF Files (.pdf) — Snap' });
+new Setting(containerEl).setName('PDF files — snap').setHeading();
 
 new Setting(containerEl)
 .setName('Snap activation key')
@@ -260,15 +349,15 @@ new Setting(containerEl)
 .setName('Default snap direction')
 .setDesc('Snap direction applied when opening a PDF.')
 .addDropdown(dd =>
-dd.addOption('horizontal', '⟷ Horizontal')
-  .addOption('vertical',   '↕ Vertical')
+dd.addOption('horizontal', '⟷ horizontal')
+  .addOption('vertical',   '↕ vertical')
   .addOption('slope',      '↗ 45°')
   .setValue(this.plugin.settings.snapDefaultDirection)
   .onChange(async v => { this.plugin.settings.snapDefaultDirection = v as SnapDirection; await this.plugin.saveSettings(); })
 );
 
 // ── Keyboard Shortcuts (PDF) ──────────────────────────────────────
-containerEl.createEl('h3', { text: 'PDF Keyboard Shortcuts' });
+new Setting(containerEl).setName('PDF keyboard shortcuts').setHeading();
 containerEl.createEl('p', {
 text: 'Single character keys (no modifier). Avoid letters already used by Obsidian globally.',
 cls: 'setting-item-description',
@@ -280,7 +369,7 @@ new Setting(containerEl)
 .setDesc(desc)
 .addText(t =>
 t.setValue(get())
- .setPlaceholder('single key')
+ .setPlaceholder('Single key')
  .onChange(async raw => {
  const k = normKey(raw);
  if (k) { set(k); t.setValue(k); await this.plugin.saveSettings(); }

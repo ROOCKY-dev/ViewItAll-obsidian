@@ -22,6 +22,15 @@ export default tseslint.config(
 		},
 	},
 	...obsidianmd.configs.recommended,
+	{
+		plugins: {
+			'@typescript-eslint': tseslint.plugin,
+		},
+		rules: {
+			'no-console': 'error',
+			'@typescript-eslint/no-explicit-any': 'error',
+		},
+	},
 	globalIgnores([
 		"node_modules",
 		"dist",
@@ -30,5 +39,6 @@ export default tseslint.config(
 		"version-bump.mjs",
 		"versions.json",
 		"main.js",
+		"scripts/check-css.js",
 	]),
 );
