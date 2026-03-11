@@ -52,6 +52,9 @@ export class PdfView extends FileView {
 	private pageIndicatorEl: HTMLElement | null = null;
 	private pageObserver: IntersectionObserver | null = null;
 
+	// Debounce zoom re-renders so rapid scroll events don't queue concurrent renders
+	private _zoomDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 	constructor(leaf: WorkspaceLeaf, plugin: ViewItAllPlugin) {
 		super(leaf);
 		this.plugin = plugin;
@@ -92,6 +95,7 @@ export class PdfView extends FileView {
 	}
 
 	async onUnloadFile(_file: TFile): Promise<void> {
+		if (this._zoomDebounceTimer !== null) { clearTimeout(this._zoomDebounceTimer); this._zoomDebounceTimer = null; }
 		this.pageObserver?.disconnect();
 		this.pageObserver = null;
 		if (this.pdfDoc) { this.pdfDoc.destroy(); this.pdfDoc = null; }
@@ -139,16 +143,23 @@ export class PdfView extends FileView {
 		const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
 		this.pdfDoc = await loadingTask.promise;
 
-		loadingEl.remove();
-
+		// Render ALL pages into a temp container first, then insert atomically.
+		// This keeps the loading spinner visible until every page is ready.
+		const tempContainer = document.createElement('div');
 		for (let i = 1; i <= this.pdfDoc.numPages; i++) {
-			const ctx = await this.renderPage(i, scrollArea);
-			this.addPageLabel(scrollArea, i);
+			const ctx = await this.renderPage(i, tempContainer);
+			this.addPageLabel(tempContainer, i);
 			this.pages.push(ctx);
+		}
+
+		loadingEl.remove();
+		while (tempContainer.firstChild) scrollArea.appendChild(tempContainer.firstChild);
+
+		for (const ctx of this.pages) {
 			this.redrawAnnotations(ctx);
 			this.attachDrawListeners(ctx);
 		}
-
+		this.updateCanvasInteraction();
 		this.attachPageObserver();
 	}
 
@@ -269,13 +280,7 @@ export class PdfView extends FileView {
 		if (Math.abs(scale - this.currentScale) < 0.001) return;
 		this.currentScale = scale;
 		if (this.zoomLabelEl) this.zoomLabelEl.textContent = `${Math.round(scale * 100)}%`;
-		await this.reRenderPages();
-		// Restore the focal point so the content under the pointer/centre stays put
-		if (frac && this.scrollAreaEl) {
-			const el = this.scrollAreaEl;
-			el.scrollLeft = frac.x * el.scrollWidth - frac.pX;
-			el.scrollTop  = frac.y * el.scrollHeight - frac.pY;
-		}
+		await this.reRenderPages(frac);
 	}
 
 	private handleWheelZoom(e: WheelEvent): void {
@@ -283,6 +288,8 @@ export class PdfView extends FileView {
 		e.preventDefault();
 		const scrollEl = this.scrollAreaEl;
 		if (!scrollEl) return;
+
+		// Capture focal point at the time of the wheel event
 		const rect = scrollEl.getBoundingClientRect();
 		const pX = e.clientX - rect.left;
 		const pY = e.clientY - rect.top;
@@ -291,9 +298,21 @@ export class PdfView extends FileView {
 			y: (scrollEl.scrollTop  + pY) / (scrollEl.scrollHeight || 1),
 			pX, pY,
 		};
+
 		const idx  = this.ZOOM_STEPS.findIndex(s => Math.abs(s - this.currentScale) < 0.01);
 		const next = this.ZOOM_STEPS[Math.max(0, Math.min(this.ZOOM_STEPS.length - 1, idx + (e.deltaY < 0 ? 1 : -1)))];
-		if (next !== undefined) this.setZoom(next, frac);
+		if (next === undefined || Math.abs(next - this.currentScale) < 0.001) return;
+
+		// Update the label immediately for a responsive feel
+		this.currentScale = next;
+		if (this.zoomLabelEl) this.zoomLabelEl.textContent = `${Math.round(next * 100)}%`;
+
+		// Debounce the expensive re-render — fires 250 ms after the last wheel event
+		if (this._zoomDebounceTimer !== null) clearTimeout(this._zoomDebounceTimer);
+		this._zoomDebounceTimer = setTimeout(() => {
+			this._zoomDebounceTimer = null;
+			this.reRenderPages(frac).catch(console.error);
+		}, 250);
 	}
 
 	private viewportCenterFrac(): { x: number; y: number; pX: number; pY: number } | undefined {
@@ -308,19 +327,53 @@ export class PdfView extends FileView {
 		};
 	}
 
-	private async reRenderPages(): Promise<void> {
+	private async reRenderPages(frac?: { x: number; y: number; pX: number; pY: number }): Promise<void> {
 		if (!this.pdfDoc || !this.scrollAreaEl) return;
-		for (const ctx of this.pages) ctx.container.remove();
-		this.pages = [];
+		const scrollEl = this.scrollAreaEl;
+
+		// Disconnect observer before touching the DOM
+		this.pageObserver?.disconnect();
+		this.pageObserver = null;
+
+		// Overlay covers existing pages so there is no blank flash while rendering
+		const overlay = document.createElement('div');
+		overlay.className = 'via-pdf-loading via-pdf-loading-overlay';
+		const spinner = document.createElement('div');
+		spinner.className = 'via-pdf-loading-spinner';
+		overlay.appendChild(spinner);
+		const lbl = document.createElement('span');
+		lbl.textContent = 'Rendering…';
+		overlay.appendChild(lbl);
+		scrollEl.appendChild(overlay);
+
+		// Render all pages off-screen into a temp container
+		const tempContainer = document.createElement('div');
+		const newPages: PageRenderCtx[] = [];
 		for (let i = 1; i <= this.pdfDoc.numPages; i++) {
-			const ctx = await this.renderPage(i, this.scrollAreaEl);
-			this.addPageLabel(this.scrollAreaEl, i);
-			this.pages.push(ctx);
+			const ctx = await this.renderPage(i, tempContainer);
+			this.addPageLabel(tempContainer, i);
+			newPages.push(ctx);
+		}
+
+		// Atomic swap: remove old pages/labels, move new ones in, drop overlay
+		for (const ctx of this.pages) ctx.container.remove();
+		scrollEl.querySelectorAll('.via-pdf-page-label').forEach(l => l.remove());
+		while (tempContainer.firstChild) scrollEl.insertBefore(tempContainer.firstChild, overlay);
+		overlay.remove();
+
+		this.pages = newPages;
+		for (const ctx of this.pages) {
 			this.redrawAnnotations(ctx);
 			this.attachDrawListeners(ctx);
 		}
 		this.updateCanvasInteraction();
 		this.attachPageObserver();
+
+		// Restore focal point after layout is updated
+		if (frac) {
+			scrollEl.scrollLeft = frac.x * scrollEl.scrollWidth  - frac.pX;
+			scrollEl.scrollTop  = frac.y * scrollEl.scrollHeight - frac.pY;
+		}
 	}
 
 	// ── Page tracking ────────────────────────────────────────────────────────
