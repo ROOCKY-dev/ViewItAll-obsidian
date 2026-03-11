@@ -21,10 +21,29 @@ interface JSZipConstructor {
 	loadAsync(data: ArrayBuffer | Uint8Array): Promise<JSZipInstance>;
 }
 
+/** Run-level text data with formatting. */
+interface RunData {
+	text: string;
+	bold: boolean;
+	italic: boolean;
+}
+
+/** A paragraph within a shape. */
+interface ParagraphData {
+	runs: RunData[];
+	isBullet: boolean;
+}
+
+/** A shape extracted from a slide. */
+interface ShapeData {
+	type: 'title' | 'ctrTitle' | 'subTitle' | 'body' | 'other';
+	paragraphs: ParagraphData[];
+}
+
 /** Parsed slide data. */
 interface SlideData {
 	index: number;
-	texts: string[];
+	shapes: ShapeData[];
 	imageDataUrls: string[];
 }
 
@@ -37,6 +56,7 @@ export class PptxView extends FileView {
 	// Zoom & panel state
 	private zoomLevel = 1.0;
 	private stripVisible = true;
+	private isFullscreen = false;
 	private readonly ZOOM_STEP = 0.2;
 	private readonly ZOOM_MIN = 0.3;
 	private readonly ZOOM_MAX = 2.0;
@@ -77,6 +97,7 @@ export class PptxView extends FileView {
 		this.currentFile = null;
 		this.zoomLevel = 1.0;
 		this.stripVisible = true;
+		this.isFullscreen = false;
 	}
 
 	private async renderFile(file: TFile): Promise<void> {
@@ -145,6 +166,12 @@ export class PptxView extends FileView {
 
 		toolbar.createEl('div', { cls: 'via-toolbar-sep' });
 
+		// First slide
+		const firstBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
+		setIcon(firstBtn, 'chevrons-left');
+		setTooltip(firstBtn, 'First slide');
+		firstBtn.addEventListener('click', () => this.goToSlide(0));
+
 		// Prev
 		const prevBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
 		setIcon(prevBtn, 'chevron-left');
@@ -160,6 +187,12 @@ export class PptxView extends FileView {
 		setIcon(nextBtn, 'chevron-right');
 		setTooltip(nextBtn, 'Next slide');
 		nextBtn.addEventListener('click', () => this.goToSlide(this.activeSlide + 1));
+
+		// Last slide
+		const lastBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
+		setIcon(lastBtn, 'chevrons-right');
+		setTooltip(lastBtn, 'Last slide');
+		lastBtn.addEventListener('click', () => this.goToSlide(this.slides.length - 1));
 
 		toolbar.createEl('div', { cls: 'via-toolbar-sep' });
 
@@ -178,6 +211,21 @@ export class PptxView extends FileView {
 		toolbar.createEl('div', {
 			cls: 'via-pptx-info',
 			text: `${this.slides.length} slides`,
+		});
+
+		toolbar.createEl('div', { cls: 'via-toolbar-sep' });
+
+		// Fullscreen toggle
+		const fullscreenBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
+		setIcon(fullscreenBtn, 'expand');
+		setTooltip(fullscreenBtn, 'Fullscreen slide');
+		fullscreenBtn.addEventListener('click', () => {
+			this.isFullscreen = !this.isFullscreen;
+			this.wrapper?.classList.toggle('via-pptx-fullscreen', this.isFullscreen);
+			this.slideStrip?.classList.toggle('is-hidden', this.isFullscreen || !this.stripVisible);
+			setIcon(fullscreenBtn, this.isFullscreen ? 'shrink' : 'expand');
+			setTooltip(fullscreenBtn, this.isFullscreen ? 'Exit fullscreen' : 'Fullscreen slide');
+			fullscreenBtn.classList.toggle('is-active', this.isFullscreen);
 		});
 
 		toolbar.createEl('div', { cls: 'via-toolbar-sep' });
@@ -229,6 +277,12 @@ export class PptxView extends FileView {
 			} else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
 				e.preventDefault();
 				this.goToSlide(this.activeSlide - 1);
+			} else if (e.key === 'Home') {
+				e.preventDefault();
+				this.goToSlide(0);
+			} else if (e.key === 'End') {
+				e.preventDefault();
+				this.goToSlide(this.slides.length - 1);
 			}
 		});
 		// Make focusable for keyboard events
@@ -268,15 +322,27 @@ export class PptxView extends FileView {
 			numEl.textContent = String(i + 1);
 
 			const preview = thumb.createEl('div', { cls: 'via-pptx-thumb-preview' });
-			// Show first line of text as mini preview
+			// Show first meaningful text as mini preview
 			const slide = this.slides[i];
-			const firstText = slide?.texts[0] ?? '';
+			const firstText = this.getSlidePreviewText(slide);
 			preview.createEl('span', {
 				text: firstText.slice(0, 60) + (firstText.length > 60 ? '…' : ''),
 			});
 
 			thumb.addEventListener('click', () => this.goToSlide(i));
 		}
+	}
+
+	/** Get a short text preview for the strip thumbnail. */
+	private getSlidePreviewText(slide: SlideData | undefined): string {
+		if (!slide) return '';
+		for (const shape of slide.shapes) {
+			for (const para of shape.paragraphs) {
+				const text = para.runs.map(r => r.text).join('');
+				if (text.trim()) return text;
+			}
+		}
+		return '';
 	}
 
 	private updateStripActive(): void {
@@ -303,21 +369,75 @@ export class PptxView extends FileView {
 			});
 		}
 
-		// Text blocks
-		for (const text of slide.texts) {
-			if (text.trim()) {
-				this.slideContainer.createEl('div', {
-					cls: 'via-pptx-slide-text',
-					text: text,
-				});
+		// Shapes — ordered by type priority: title/ctrTitle first, then subtitle, then body, then other
+		const typeOrder: Record<string, number> = { ctrTitle: 0, title: 1, subTitle: 2, body: 3, other: 4 };
+		const sorted = [...slide.shapes].sort(
+			(a, b) => (typeOrder[a.type] ?? 4) - (typeOrder[b.type] ?? 4)
+		);
+
+		for (const shape of sorted) {
+			const hasContent = shape.paragraphs.some(p => p.runs.some(r => r.text.trim()));
+			if (!hasContent) continue;
+
+			const shapeEl = this.slideContainer.createEl('div', { cls: `via-pptx-shape via-pptx-shape--${shape.type}` });
+
+			// Check if the entire shape is a bullet list
+			const isList = shape.paragraphs.length > 1 && shape.paragraphs.some(p => p.isBullet);
+
+			if (isList) {
+				// Render as a list: non-bullet paragraphs as regular text, bullet items as <li>
+				let currentList: HTMLElement | null = null;
+				for (const para of shape.paragraphs) {
+					const text = para.runs.map(r => r.text).join('');
+					if (!text.trim()) {
+						currentList = null;
+						continue;
+					}
+					if (para.isBullet) {
+						if (!currentList) {
+							currentList = shapeEl.createEl('ul', { cls: 'via-pptx-list' });
+						}
+						const li = currentList.createEl('li');
+						this.renderRuns(li, para.runs);
+					} else {
+						currentList = null;
+						const p = shapeEl.createEl('p');
+						this.renderRuns(p, para.runs);
+					}
+				}
+			} else {
+				// Render paragraphs as <p> elements
+				for (const para of shape.paragraphs) {
+					const text = para.runs.map(r => r.text).join('');
+					if (!text.trim()) continue;
+					const p = shapeEl.createEl('p');
+					this.renderRuns(p, para.runs);
+				}
 			}
 		}
 
-		if (slide.texts.length === 0 && slide.imageDataUrls.length === 0) {
+		if (slide.shapes.length === 0 && slide.imageDataUrls.length === 0) {
 			this.slideContainer.createEl('div', {
 				cls: 'via-pptx-slide-empty',
 				text: '(empty slide)',
 			});
+		}
+	}
+
+	/** Render formatted runs into a container element. */
+	private renderRuns(container: HTMLElement, runs: RunData[]): void {
+		for (const run of runs) {
+			if (!run.text) continue;
+			if (run.bold && run.italic) {
+				const b = container.createEl('strong');
+				b.createEl('em', { text: run.text });
+			} else if (run.bold) {
+				container.createEl('strong', { text: run.text });
+			} else if (run.italic) {
+				container.createEl('em', { text: run.text });
+			} else {
+				container.appendText(run.text);
+			}
 		}
 	}
 
@@ -333,7 +453,6 @@ export class PptxView extends FileView {
 				return numA - numB;
 			});
 
-		// Discover relationship files for images
 		const slides: SlideData[] = [];
 
 		for (let i = 0; i < slideFiles.length; i++) {
@@ -341,14 +460,14 @@ export class PptxView extends FileView {
 			if (!slideFile) continue;
 			const slideXml = await this.readZipFile(zip, slideFile);
 			if (!slideXml) {
-				slides.push({ index: i + 1, texts: [], imageDataUrls: [] });
+				slides.push({ index: i + 1, shapes: [], imageDataUrls: [] });
 				continue;
 			}
 
-			const texts = this.extractTexts(slideXml);
+			const shapes = this.extractShapes(slideXml);
 			const imageDataUrls = await this.extractImages(zip, slideFile);
 
-			slides.push({ index: i + 1, texts, imageDataUrls });
+			slides.push({ index: i + 1, shapes, imageDataUrls });
 		}
 
 		return slides;
@@ -360,38 +479,128 @@ export class PptxView extends FileView {
 		return entry.async('string');
 	}
 
-	/** Extract all text runs from slide XML. */
-	private extractTexts(xml: string): string[] {
-		const texts: string[] = [];
-		// Parse <a:p> paragraphs → concatenate <a:t> text runs within each
+	/** Extract shapes with full text structure from slide XML. */
+	private extractShapes(xml: string): ShapeData[] {
 		const parser = new DOMParser();
 		const doc = parser.parseFromString(xml, 'application/xml');
 
-		// Namespace-aware query: a:t elements hold text
-		const textEls = doc.getElementsByTagName('a:t');
-		// Group by parent <a:p> paragraph
-		const paragraphs = new Map<Node, string[]>();
+		const shapes: ShapeData[] = [];
+		const spElements = doc.getElementsByTagName('p:sp');
 
-		for (let i = 0; i < textEls.length; i++) {
-			const el = textEls[i];
-			if (!el) continue;
-			// Walk up to find the <a:p> ancestor
-			let pNode: Node | null = el.parentNode;
-			while (pNode && pNode.nodeName !== 'a:p') {
-				pNode = pNode.parentNode;
+		for (let s = 0; s < spElements.length; s++) {
+			const sp = spElements[s];
+			if (!sp) continue;
+
+			// Detect shape type from placeholder attribute
+			const shapeType = this.detectShapeType(sp);
+
+			// Get text body
+			const txBody = sp.getElementsByTagName('p:txBody');
+			if (txBody.length === 0) continue;
+			const body = txBody[0];
+			if (!body) continue;
+
+			// Extract paragraphs
+			const paragraphs: ParagraphData[] = [];
+			const pElements = body.getElementsByTagName('a:p');
+
+			for (let p = 0; p < pElements.length; p++) {
+				const pEl = pElements[p];
+				if (!pEl) continue;
+
+				// Only process direct <a:p> children of this txBody (not nested)
+				if (pEl.parentNode !== body) continue;
+
+				const isBullet = this.detectBullet(pEl);
+				const runs = this.extractRuns(pEl);
+
+				paragraphs.push({ runs, isBullet });
 			}
-			const groupKey: Node = pNode ?? el;
 
-			if (!paragraphs.has(groupKey)) paragraphs.set(groupKey, []);
-			paragraphs.get(groupKey)?.push(el.textContent ?? '');
+			if (paragraphs.length > 0) {
+				shapes.push({ type: shapeType, paragraphs });
+			}
 		}
 
-		for (const runs of paragraphs.values()) {
-			const line = runs.join('');
-			if (line.trim()) texts.push(line);
+		return shapes;
+	}
+
+	/** Detect shape type from <p:ph> placeholder attributes. */
+	private detectShapeType(sp: Element): ShapeData['type'] {
+		const phElements = sp.getElementsByTagName('p:ph');
+		if (phElements.length === 0) return 'other';
+		const ph = phElements[0];
+		if (!ph) return 'other';
+		const type = ph.getAttribute('type') ?? '';
+		if (type === 'title') return 'title';
+		if (type === 'ctrTitle') return 'ctrTitle';
+		if (type === 'subTitle') return 'subTitle';
+		if (type === 'body') return 'body';
+		return 'other';
+	}
+
+	/** Detect if a paragraph has bullet markers. */
+	private detectBullet(pEl: Element): boolean {
+		const pPr = pEl.getElementsByTagName('a:pPr');
+		if (pPr.length === 0) return false;
+		const props = pPr[0];
+		if (!props) return false;
+
+		// Has explicit bullet characters or auto-numbered bullets
+		if (props.getElementsByTagName('a:buChar').length > 0) return true;
+		if (props.getElementsByTagName('a:buAutoNum').length > 0) return true;
+		// Has indent level but no explicit "no bullet" — treat as bullet
+		const lvl = props.getAttribute('lvl');
+		if (lvl && parseInt(lvl, 10) > 0 && props.getElementsByTagName('a:buNone').length === 0) return true;
+
+		return false;
+	}
+
+	/** Extract runs with formatting from a paragraph element. */
+	private extractRuns(pEl: Element): RunData[] {
+		const runs: RunData[] = [];
+
+		for (let i = 0; i < pEl.childNodes.length; i++) {
+			const child = pEl.childNodes[i];
+			if (!child) continue;
+
+			// <a:r> run elements
+			if (child.nodeName === 'a:r') {
+				const rEl = child as Element;
+				let bold = false;
+				let italic = false;
+
+				// Check <a:rPr> for formatting
+				const rPr = rEl.getElementsByTagName('a:rPr');
+				if (rPr.length > 0 && rPr[0]) {
+					bold = rPr[0].getAttribute('b') === '1';
+					italic = rPr[0].getAttribute('i') === '1';
+				}
+
+				// Get text from <a:t>
+				const tEls = rEl.getElementsByTagName('a:t');
+				for (let t = 0; t < tEls.length; t++) {
+					const tEl = tEls[t];
+					if (!tEl) continue;
+					const text = tEl.textContent ?? '';
+					if (text) runs.push({ text, bold, italic });
+				}
+			}
+
+			// <a:fld> field elements (slide numbers, dates, etc.)
+			if (child.nodeName === 'a:fld') {
+				const fEl = child as Element;
+				const tEls = fEl.getElementsByTagName('a:t');
+				for (let t = 0; t < tEls.length; t++) {
+					const tEl = tEls[t];
+					if (!tEl) continue;
+					const text = tEl.textContent ?? '';
+					if (text) runs.push({ text, bold: false, italic: false });
+				}
+			}
 		}
 
-		return texts;
+		return runs;
 	}
 
 	/** Extract images referenced in a slide's relationship file. */
