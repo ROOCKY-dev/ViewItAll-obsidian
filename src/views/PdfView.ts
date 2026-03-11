@@ -132,7 +132,15 @@ export class PdfView extends FileView {
 			if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
 			const toolMap: Record<string, AnnotTool> = { v: 'none', p: 'pen', h: 'highlighter', e: 'eraser', n: 'note' };
 			const tool = toolMap[e.key.toLowerCase()];
-			if (tool !== undefined) { e.preventDefault(); this.setTool(tool); }
+			if (tool !== undefined) { e.preventDefault(); this.setTool(tool); return; }
+			// S = cycle snap direction
+			if (e.key.toLowerCase() === 's') {
+				e.preventDefault();
+				const dirs: Array<'horizontal' | 'vertical' | 'slope'> = ['horizontal', 'vertical', 'slope'];
+				const idx = dirs.indexOf(this.snapDirection);
+				this.snapDirection = dirs[(idx + 1) % dirs.length]!;
+				this.updateSnapDirBtn();
+			}
 		});
 		this.registerDomEvent(this.containerEl as HTMLElement, 'keyup', (e: KeyboardEvent) => {
 			if (e.key === 'Alt') this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
@@ -700,7 +708,7 @@ export class PdfView extends FileView {
 		if (!this.snapDirBtnEl) return;
 		const labels = { horizontal: '⟷ H', vertical: '↕ V', slope: '↗ 45°' };
 		this.snapDirBtnEl.textContent = labels[this.snapDirection];
-		this.snapDirBtnEl.title = `Snap: ${this.snapDirection} — click to cycle (hold Alt while drawing to activate)`;
+		this.snapDirBtnEl.title = `Snap: ${this.snapDirection} — S key or click to cycle · hold Alt while drawing to activate`;
 	}
 
 	/** Constrain `raw` to the current snap direction from `origin`. */
