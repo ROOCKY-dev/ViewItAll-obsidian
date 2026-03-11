@@ -48,6 +48,10 @@ export class PdfView extends FileView {
 	private scrollAreaEl: HTMLElement | null = null;
 	private zoomLabelEl: HTMLElement | null = null;
 
+	// Page tracking
+	private pageIndicatorEl: HTMLElement | null = null;
+	private pageObserver: IntersectionObserver | null = null;
+
 	constructor(leaf: WorkspaceLeaf, plugin: ViewItAllPlugin) {
 		super(leaf);
 		this.plugin = plugin;
@@ -88,6 +92,8 @@ export class PdfView extends FileView {
 	}
 
 	async onUnloadFile(_file: TFile): Promise<void> {
+		this.pageObserver?.disconnect();
+		this.pageObserver = null;
 		if (this.pdfDoc) { this.pdfDoc.destroy(); this.pdfDoc = null; }
 		this.pages = [];
 		this.contentEl.empty();
@@ -100,6 +106,9 @@ export class PdfView extends FileView {
 		this.pages = [];
 		this.scrollAreaEl = null;
 		this.zoomLabelEl = null;
+		this.pageIndicatorEl = null;
+		this.pageObserver?.disconnect();
+		this.pageObserver = null;
 
 		// Flex wrapper fills the full leaf height
 		const wrapper = this.contentEl.createEl('div', { cls: 'via-pdf-wrapper' });
@@ -134,10 +143,13 @@ export class PdfView extends FileView {
 
 		for (let i = 1; i <= this.pdfDoc.numPages; i++) {
 			const ctx = await this.renderPage(i, scrollArea);
+			this.addPageLabel(scrollArea, i);
 			this.pages.push(ctx);
 			this.redrawAnnotations(ctx);
 			this.attachDrawListeners(ctx);
 		}
+
+		this.attachPageObserver();
 	}
 
 	private async renderPage(pageNum: number, container: HTMLElement): Promise<PageRenderCtx> {
@@ -169,6 +181,15 @@ export class PdfView extends FileView {
 		await page.render(renderCtx).promise;
 
 		return { pageNum, pdfCanvas, annotCanvas, container: pageWrap };
+	}
+
+	// Append the page label AFTER the page wrapper in the scroll area (sibling, not child,
+	// because canvases inside pageWrap are position:absolute so pageWrap can't grow for a label)
+	private addPageLabel(container: HTMLElement, pageNum: number): void {
+		container.createEl('div', {
+			cls: 'via-pdf-page-label',
+			text: `${pageNum} / ${this.pdfDoc!.numPages}`,
+		});
 	}
 
 	// ── Toolbar ─────────────────────────────────────────────────────────────
@@ -215,6 +236,15 @@ export class PdfView extends FileView {
 		const zoomIn = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '+' });
 		zoomIn.title = 'Zoom in (Ctrl+=)';
 		zoomIn.addEventListener('click', () => this.stepZoom(+1));
+
+		bar.createEl('div', { cls: 'via-toolbar-sep' });
+
+		// Page indicator — updated live by IntersectionObserver
+		this.pageIndicatorEl = bar.createEl('span', {
+			cls: 'via-pdf-page-indicator',
+			text: '— / —',
+		});
+		this.pageIndicatorEl.title = 'Current page / total pages';
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
 
@@ -284,11 +314,49 @@ export class PdfView extends FileView {
 		this.pages = [];
 		for (let i = 1; i <= this.pdfDoc.numPages; i++) {
 			const ctx = await this.renderPage(i, this.scrollAreaEl);
+			this.addPageLabel(this.scrollAreaEl, i);
 			this.pages.push(ctx);
 			this.redrawAnnotations(ctx);
 			this.attachDrawListeners(ctx);
 		}
 		this.updateCanvasInteraction();
+		this.attachPageObserver();
+	}
+
+	// ── Page tracking ────────────────────────────────────────────────────────
+
+	private attachPageObserver(): void {
+		this.pageObserver?.disconnect();
+		if (!this.scrollAreaEl || this.pages.length === 0) return;
+
+		const total = this.pdfDoc!.numPages;
+		// Map container element → pageNum for O(1) lookup in the callback
+		const pageMap = new Map<Element, number>(this.pages.map(p => [p.container, p.pageNum]));
+		// Track how much of each page is visible
+		const visibleRatio = new Map<number, number>();
+
+		this.pageObserver = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const num = pageMap.get(entry.target);
+					if (num !== undefined) visibleRatio.set(num, entry.intersectionRatio);
+				}
+				// The most-visible page wins
+				let bestPage = 1;
+				let bestRatio = -1;
+				for (const [num, ratio] of visibleRatio) {
+					if (ratio > bestRatio) { bestRatio = ratio; bestPage = num; }
+				}
+				if (this.pageIndicatorEl) {
+					this.pageIndicatorEl.textContent = `${bestPage} / ${total}`;
+				}
+			},
+			{ root: this.scrollAreaEl, threshold: Array.from({ length: 11 }, (_, i) => i / 10) }
+		);
+
+		for (const ctx of this.pages) this.pageObserver.observe(ctx.container);
+		// Seed the indicator immediately
+		if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = `1 / ${total}`;
 	}
 
 	private updateCanvasInteraction(): void {
