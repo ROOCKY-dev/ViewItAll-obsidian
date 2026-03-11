@@ -54,6 +54,24 @@ export class PdfView extends FileView {
 		pdfjsLib.GlobalWorkerOptions.workerSrc = getPdfWorkerUrl();
 	}
 
+	onload(): void {
+		super.onload();
+		// Keyboard zoom shortcuts — registered once per view lifetime
+		this.registerDomEvent(this.containerEl as HTMLElement, 'keydown', (e: KeyboardEvent) => {
+			if (!e.ctrlKey && !e.metaKey) return;
+			if (e.key === '0') {
+				e.preventDefault();
+				this.setZoom(1.0, this.viewportCenterFrac());
+			} else if (e.key === '=' || e.key === '+') {
+				e.preventDefault();
+				this.stepZoom(+1);
+			} else if (e.key === '-') {
+				e.preventDefault();
+				this.stepZoom(-1);
+			}
+		});
+	}
+
 	getViewType(): string { return VIEW_TYPE_PDF; }
 	getDisplayText(): string { return this.file?.basename ?? 'PDF'; }
 	getIcon(): string { return 'file'; }
@@ -91,6 +109,9 @@ export class PdfView extends FileView {
 
 		const scrollArea = wrapper.createEl('div', { cls: 'via-pdf-scroll' });
 		this.scrollAreaEl = scrollArea;
+
+		// Ctrl/Cmd + scroll = zoom centred on pointer
+		scrollArea.addEventListener('wheel', (e: WheelEvent) => this.handleWheelZoom(e), { passive: false });
 
 		// Loading indicator — shown while PDF is parsed and pages are rendered
 		const loadingEl = scrollArea.createEl('div', { cls: 'via-pdf-loading' });
@@ -181,18 +202,18 @@ export class PdfView extends FileView {
 
 		// Zoom controls
 		const zoomOut = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '−' });
-		zoomOut.title = 'Zoom out';
+		zoomOut.title = 'Zoom out (Ctrl+−)';
 		zoomOut.addEventListener('click', () => this.stepZoom(-1));
 
 		this.zoomLabelEl = bar.createEl('button', {
 			cls: 'via-btn via-btn-zoom-label',
 			text: `${Math.round(this.currentScale * 100)}%`,
 		});
-		this.zoomLabelEl.title = 'Reset to 100%';
-		this.zoomLabelEl.addEventListener('click', () => this.setZoom(1.0));
+		this.zoomLabelEl.title = 'Reset to 100% (Ctrl+0)';
+		this.zoomLabelEl.addEventListener('click', () => this.setZoom(1.0, this.viewportCenterFrac()));
 
 		const zoomIn = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '+' });
-		zoomIn.title = 'Zoom in';
+		zoomIn.title = 'Zoom in (Ctrl+=)';
 		zoomIn.addEventListener('click', () => this.stepZoom(+1));
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
@@ -211,13 +232,50 @@ export class PdfView extends FileView {
 	private stepZoom(direction: -1 | 1): void {
 		const idx = this.ZOOM_STEPS.findIndex(s => Math.abs(s - this.currentScale) < 0.01);
 		const next = this.ZOOM_STEPS[Math.max(0, Math.min(this.ZOOM_STEPS.length - 1, idx + direction))];
-		if (next !== undefined) this.setZoom(next);
+		if (next !== undefined) this.setZoom(next, this.viewportCenterFrac());
 	}
 
-	private setZoom(scale: number): void {
+	private async setZoom(scale: number, frac?: { x: number; y: number; pX: number; pY: number }): Promise<void> {
+		if (Math.abs(scale - this.currentScale) < 0.001) return;
 		this.currentScale = scale;
 		if (this.zoomLabelEl) this.zoomLabelEl.textContent = `${Math.round(scale * 100)}%`;
-		this.reRenderPages();
+		await this.reRenderPages();
+		// Restore the focal point so the content under the pointer/centre stays put
+		if (frac && this.scrollAreaEl) {
+			const el = this.scrollAreaEl;
+			el.scrollLeft = frac.x * el.scrollWidth - frac.pX;
+			el.scrollTop  = frac.y * el.scrollHeight - frac.pY;
+		}
+	}
+
+	private handleWheelZoom(e: WheelEvent): void {
+		if (!e.ctrlKey && !e.metaKey) return;
+		e.preventDefault();
+		const scrollEl = this.scrollAreaEl;
+		if (!scrollEl) return;
+		const rect = scrollEl.getBoundingClientRect();
+		const pX = e.clientX - rect.left;
+		const pY = e.clientY - rect.top;
+		const frac = {
+			x: (scrollEl.scrollLeft + pX) / (scrollEl.scrollWidth  || 1),
+			y: (scrollEl.scrollTop  + pY) / (scrollEl.scrollHeight || 1),
+			pX, pY,
+		};
+		const idx  = this.ZOOM_STEPS.findIndex(s => Math.abs(s - this.currentScale) < 0.01);
+		const next = this.ZOOM_STEPS[Math.max(0, Math.min(this.ZOOM_STEPS.length - 1, idx + (e.deltaY < 0 ? 1 : -1)))];
+		if (next !== undefined) this.setZoom(next, frac);
+	}
+
+	private viewportCenterFrac(): { x: number; y: number; pX: number; pY: number } | undefined {
+		const el = this.scrollAreaEl;
+		if (!el) return undefined;
+		const pX = el.clientWidth  / 2;
+		const pY = el.clientHeight / 2;
+		return {
+			x: (el.scrollLeft + pX) / (el.scrollWidth  || 1),
+			y: (el.scrollTop  + pY) / (el.scrollHeight || 1),
+			pX, pY,
+		};
 	}
 
 	private async reRenderPages(): Promise<void> {
