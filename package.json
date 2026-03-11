@@ -1,6 +1,6 @@
 {
 	"name": "viewitall-md",
-	"version": "1.2.3",
+	"version": "1.2.4",
 	"description": "View and edit MS Word (.docx) and PDF files directly inside Obsidian.",
 	"main": "main.js",
 	"scripts": {
