@@ -40,6 +40,8 @@ agents/
 agents/AGENT.md
 agents/DECISION.md
 agents/STATUS.md
+scripts/
+scripts/check-css.js
 
 # Release workflow temporary files
 *.zip

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CSS hardcoded-value checker.
+ * CSS hardcoded-value check.
  * Fails if styles.css contains hardcoded colours, px font-sizes, or raw hex values.
  * Run: node scripts/check-css.js
  */
